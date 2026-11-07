@@ -757,3 +757,116 @@ ul.error-list, ol.error-list { padding-inline-start: 24px; }
 }
 .course-menu-link:focus-visible { outline-offset: -3px; }
 .course-menu-meta { color: var(--muted); font-size: .76rem; font-weight: 500; }
+
+.card-study, .card-setup, .card-round-end { max-width: 760px; }
+.card-round-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px 10px;
+  margin-bottom: 12px;
+  font-size: .88rem;
+}
+.card-round-label { font-weight: 750; }
+.card-round-count { color: var(--muted); }
+.card-round-bar .meter { flex: 0 0 100%; margin: 0; }
+
+.swipe-stage {
+  overflow: hidden;
+  margin: -8px -8px 0;
+  padding: 8px;
+  border-radius: 22px;
+}
+.swipe-stage .flashcard {
+  min-height: clamp(215px, 37vw, 314px);
+  transform: translateX(var(--swipe-x, 0px)) rotate(var(--swipe-angle, 0deg));
+  transition: transform 170ms ease-out, opacity 150ms ease-out;
+  cursor: grab;
+  touch-action: pan-y pinch-zoom;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.swipe-stage .flashcard.is-dragging { transition: none; cursor: grabbing; }
+.swipe-stage .flashcard.is-leaving { opacity: .08; cursor: default; }
+.swipe-badge {
+  position: absolute;
+  inset-block-start: 14px;
+  z-index: 1;
+  padding: 4px 9px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  font-size: .82rem;
+  font-weight: 750;
+  line-height: 1.3;
+  opacity: 0;
+  pointer-events: none;
+}
+.swipe-repeat { inset-inline-start: 14px; background: var(--coral-pale); color: #773723; }
+.swipe-known { inset-inline-end: 14px; background: var(--green-light); color: var(--green-deep); }
+.toward-repeat .swipe-repeat, .toward-known .swipe-known { opacity: var(--swipe-strength, 1); }
+
+.card-grade {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 6px;
+}
+.card-grade-button {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  min-height: 50px;
+  padding: 8px 6px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font-weight: 750;
+  line-height: 1.2;
+  text-align: center;
+}
+.card-grade-button small { display: block; font-size: .72rem; font-weight: 500; }
+.card-grade-button.grade-repeat { border-color: #dfb29c; background: var(--coral-pale); color: #773723; }
+.card-grade-button.grade-repeat:hover:not(:disabled) { background: #f6ded1; }
+.card-grade-button.grade-known { background: var(--green); color: #fff; }
+.card-grade-button.grade-known:hover:not(:disabled) { background: var(--green-deep); }
+
+.card-audio {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.card-session-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: .85rem;
+}
+.card-setup .toolbar { justify-content: flex-start; margin-top: 16px; }
+.card-setup .select-wrap { min-width: 0; }
+.card-setup .segmented button { min-height: 44px; }
+.round-score {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 16px;
+  margin-block: 12px;
+  color: var(--green-deep);
+  font-weight: 700;
+}
+.card-round-end .question-actions, .card-setup .question-actions { margin-top: 16px; }
+
+@media (max-width: 460px) {
+  .swipe-stage .flashcard { gap: 8px; padding-block: 27px; }
+  .card-study .card-term { font-size: clamp(1.58rem, 7vw, 2.45rem); }
+  .card-study .card-note { font-size: .87rem; }
+  .card-grade-button { font-size: .91rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .swipe-stage .flashcard { transform: translateX(var(--swipe-x, 0px)); transition: none; }
+}

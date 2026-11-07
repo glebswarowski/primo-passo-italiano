@@ -9,6 +9,7 @@
   document.querySelector("#lesson-label").textContent = `${current.id} / ${current.title}`;
   document.querySelector("#lesson-number").textContent = current.id;
   document.querySelector("#lesson-phrase").textContent = current.phrase;
+  if (current.description) document.querySelector("#lesson-description").textContent = current.description;
   document.querySelector("#footer-lesson").textContent = lessonName;
   document.title = `Primo passo · ${lessonName}`;
 
@@ -62,7 +63,7 @@
   const sections = [...new Set(lesson.drills.map(question => question.section))];
   const tags = [...new Set(lesson.cards.map(card => card.tag))];
   const questions = new Map([...lesson.drills, ...lesson.exam].map(question => [question.id, question]));
-  const blank = { cards: {}, drills: {}, errors: {}, exam: { index: 0, correct: 0 }, best: null };
+  const blank = { cards: {}, cardSession: null, drills: {}, errors: {}, exam: { index: 0, correct: 0 }, best: null };
   let saved;
   let durable = true;
   try {
@@ -75,12 +76,16 @@
   const modes = ["notes", "cards", "drills", "exam", "errors"];
   let tab = modes.includes(location.hash.slice(1)) ? location.hash.slice(1) : "notes";
   let section = sections.find(name => lesson.drills.some(question => question.section === name && !saved.drills[question.id])) || sections[0];
-  let cardTag = "";
-  let unknownOnly = false;
-  let reverse = false;
-  let cardIndex = 0;
-  let order = null;
+  const cardsById = new Map(lesson.cards.map(card => [card.id, card]));
+  if (saved.cardSession?.queue.some(id => !cardsById.has(id))) saved.cardSession = null;
+  let showCardSetup = !saved.cardSession;
+  let cardTag = saved.cardSession?.tag || "";
+  let reverse = saved.cardSession?.reverse || false;
+  let mixCards = saved.cardSession?.mix || false;
   let flipped = false;
+  let drag = null;
+  let leaving = null;
+  let suppressCardClick = null;
   let round = null;
   let retry = null;
 
@@ -133,6 +138,8 @@
   }
 
   function render() {
+    drag = null;
+    leaving = null;
     document.querySelectorAll("[data-tab]").forEach(item => {
       if (item.dataset.tab === tab) item.setAttribute("aria-current", "page");
       else item.removeAttribute("aria-current");
@@ -164,51 +171,83 @@
       <div class="question-actions">${button("Открыть карточки →", "to-cards", "primary")}</div>`;
   }
 
-  function deck() {
-    return (order || lesson.cards).filter(card =>
-      (!cardTag || card.tag === cardTag) && (!unknownOnly || saved.cards[card.id] !== "known"));
+  const cardDeck = () => lesson.cards.filter(card => !cardTag || card.tag === cardTag);
+
+  function renderCardSetup(session) {
+    const count = cardDeck().length;
+    const inProgress = session && (session.index < session.queue.length || session.repeat.length);
+    return `<div class="results card-setup">
+      <h3>Настрой серию</h3>
+      <p>Вспомни перевод и нажми на карточку, чтобы свериться. Смахни вправо, если вспомнил, или влево, чтобы повторить в следующем круге.</p>
+      <div class="toolbar">
+        <div class="segmented" aria-label="Направление перевода">
+          ${button("IT → RU", "it-first", "secondary", `aria-pressed="${!reverse}"`)}
+          ${button("RU → IT", "ru-first", "secondary", `aria-pressed="${reverse}"`)}
+        </div>
+        <label class="select-wrap">Тема
+          <select id="card-tag"><option value="">Все темы</option>
+            ${tags.map(tag => `<option ${tag === cardTag ? "selected" : ""}>${esc(tag)}</option>`).join("")}
+          </select>
+        </label>
+        ${button("Перемешать", "shuffle", "secondary", `aria-pressed="${mixCards}"`)}
+      </div>
+      <div class="question-actions">
+        ${button("Начать серию →", "start-cards", "primary")}
+        ${inProgress ? button("Продолжить текущую", "resume-cards") : ""}
+        <span class="muted">Карточек в подборке: ${count}</span>
+      </div>
+    </div>`;
   }
 
   function renderCards() {
-    const cards = deck();
-    cardIndex = Math.min(cardIndex, Math.max(0, cards.length - 1));
-    const card = cards[cardIndex];
-    const itFirst = !reverse;
-    const italianSide = flipped ? !itFirst : itFirst;
-    const known = lesson.cards.filter(item => saved.cards[item.id] === "known").length;
-    const copy = `<div class="toolbar">
-      <div class="segmented" aria-label="Направление перевода">
-        ${button("IT → RU", "it-first", "secondary", `aria-pressed="${!reverse}"`)}
-        ${button("RU → IT", "ru-first", "secondary", `aria-pressed="${reverse}"`)}
+    const session = saved.cardSession;
+    const title = heading("02 / Карточки", "Слова и фразы", "С каждым кругом остаются только карточки, которые ещё хочется повторить.");
+    if (showCardSetup || !session) return title + renderCardSetup(session);
+
+    const { queue, index, repeat, number, total } = session;
+    const known = total - (queue.length - index + repeat.length);
+    const card = cardsById.get(queue[index]);
+    if (!card) {
+      const finished = repeat.length === 0;
+      return title + `<div class="results card-round-end">
+        <p class="eyebrow">${finished ? "Серия завершена" : `Круг ${number} завершён`}</p>
+        <h3 tabindex="-1" data-card-focus>${finished ? "Вспомнил все карточки!" : "Пора повторить трудные"}</h3>
+        <div class="round-score"><span>Знаю: <b>${known} из ${total}</b></span><span>На повторение: <b>${repeat.length}</b></span></div>
+        <p>${finished ? "Можешь запустить новую серию или переходить к заданиям." : "В следующий круг попадут только карточки со свайпом влево или отметкой «Повторить»."}</p>
+        <div class="question-actions">
+          ${finished ? button("Новая серия", "new-cards", "primary") : button(`Начать круг ${number + 1} →`, "next-card-round", "primary")}
+          ${finished ? button("К практике →", "to-drills") : button("Новая серия", "new-cards", "quiet-link")}
+        </div>
+      </div>`;
+    }
+
+    const italianSide = flipped === session.reverse;
+    return title + `<div class="card-study">
+      <div class="card-round-bar">
+        <span class="card-round-label">Круг ${number}</span>
+        <span class="card-round-count">Карточка ${index + 1} из ${queue.length}</span>
+        ${progress(index, queue.length, "Прогресс текущего круга")}
       </div>
-      <label class="select-wrap">Тема
-        <select id="card-tag"><option value="">Все темы</option>
-          ${tags.map(tag => `<option ${tag === cardTag ? "selected" : ""}>${esc(tag)}</option>`).join("")}
-        </select>
-      </label>
-      ${button("Ещё учу", "filter-cards", "secondary", `aria-pressed="${unknownOnly}"`)}
-      ${button("Перемешать", "shuffle", "secondary")}
-    </div>
-    <p class="muted deck-progress">Знаю ${known} из ${lesson.cards.length}</p>
-    ${progress(known, lesson.cards.length, "Выученные карточки")}`;
-    return heading("02 / Карточки", "Слова и фразы", "Назови перевод, затем нажми на карточку. Отмечай «Знаю», когда можешь вспомнить ответ без подсказки.") + copy +
-      (card ? `<button class="flashcard${flipped ? " is-flipped" : ""}" type="button" data-action="flip">
-        <span class="card-kicker">${esc(card.tag)} · ${cardIndex + 1} / ${cards.length} · ${italianSide ? "IT" : "RU"}</span>
-        <span class="card-term" lang="${italianSide ? "it" : "ru"}">${esc(italianSide ? card.it : card.ru)}</span>
-        ${flipped && card.note ? `<span class="card-note">${esc(card.note)}</span>` : ""}
-        <span class="card-hint">${flipped ? "Вернуть лицевую сторону" : "Нажми, чтобы увидеть ответ"} ↻</span>
-      </button>
-      <div class="card-actions">
-        ${button("←", "prev-card", "secondary", 'aria-label="Предыдущая карточка"')}
-        ${italianSide ? speaker(card.it) : ""}
-        ${button("→", "next-card", "secondary", 'aria-label="Следующая карточка"')}
+      <div class="swipe-stage">
+        <button class="flashcard${flipped ? " is-flipped" : ""}" type="button" data-action="flip" aria-keyshortcuts="ArrowLeft ArrowRight">
+          <span class="swipe-badge swipe-repeat" aria-hidden="true">Повторить</span>
+          <span class="swipe-badge swipe-known" aria-hidden="true">Знаю</span>
+          <span class="card-kicker">${esc(card.tag)} · ${italianSide ? "IT" : "RU"}</span>
+          <span class="card-term" lang="${italianSide ? "it" : "ru"}">${esc(italianSide ? card.it : card.ru)}</span>
+          ${flipped && card.note ? `<span class="card-note">${esc(card.note)}</span>` : ""}
+          <span class="card-hint">${flipped ? "Вернуть лицевую сторону" : "Коснись, чтобы увидеть ответ"} ↻</span>
+        </button>
       </div>
-      <div class="card-footer">
-        ${button("Повторить", "mark-repeat", "secondary")}
-        ${button("Знаю ✓", "mark-known", "primary")}
-        <span class="muted">${saved.cards[card.id] === "known" ? "Уже в выученных" : saved.cards[card.id] === "repeat" ? "В списке на повторение" : "Новая карточка"}</span>
-      </div>` : `<div class="panel-card"><h3>В этой подборке всё выучено</h3>
-        ${button("Показать все карточки темы", "show-all-cards", "primary")}</div>`);
+      <div class="card-grade">
+        ${button("← Повторить", "mark-repeat", "card-grade-button grade-repeat")}
+        ${button("Знаю →", "mark-known", "card-grade-button grade-known")}
+      </div>
+      <div class="card-session-foot">
+        <span>Знаю <b>${known}/${total}</b> · В следующем круге <b>${repeat.length}</b></span>
+        ${button("Новая серия", "new-cards", "quiet-link")}
+      </div>
+      ${italianSide ? `<div class="card-audio">${speaker(card.it)}</div>` : ""}
+    </div>`;
   }
 
   function renderDrills() {
@@ -435,20 +474,80 @@
     speechSynthesis.speak(utterance);
   }
 
-  function moveCard(delta) {
-    const size = deck().length;
-    if (size) cardIndex = (cardIndex + delta + size) % size;
-    flipped = false;
+  function renderCardState() {
     render();
-    panel.querySelector(".flashcard")?.focus({ preventScroll: true });
+    panel.querySelector(".flashcard, [data-card-focus], [data-action='start-cards']")?.focus({ preventScroll: true });
+  }
+
+  function startCards() {
+    const ids = cardDeck().map(card => card.id);
+    if (!ids.length) return;
+    saved.cardSession = { queue: mixCards ? shuffled(ids) : ids, index: 0, repeat: [],
+      number: 1, total: ids.length, reverse, tag: cardTag, mix: mixCards };
+    showCardSetup = false;
+    flipped = false;
+    persist();
+    renderCardState();
+  }
+
+  function nextCardRound() {
+    const session = saved.cardSession;
+    if (!session || session.index !== session.queue.length || !session.repeat.length) return;
+    session.queue = session.repeat;
+    session.repeat = [];
+    session.index = 0;
+    session.number++;
+    flipped = false;
+    persist();
+    renderCardState();
+  }
+
+  function positionCard(element, delta) {
+    element.style.setProperty("--swipe-x", `${delta}px`);
+    element.style.setProperty("--swipe-angle", `${Math.max(-13, Math.min(13, delta / 13))}deg`);
+    element.style.setProperty("--swipe-strength", Math.min(1, Math.abs(delta) / 90));
+    element.classList.toggle("toward-repeat", delta < 0);
+    element.classList.toggle("toward-known", delta > 0);
   }
 
   function markCard(known) {
-    const card = deck()[cardIndex];
-    if (!card) return;
-    saved.cards[card.id] = known ? "known" : "repeat";
+    const session = saved.cardSession;
+    const id = session?.queue[session.index];
+    if (!id || showCardSetup || leaving) return;
+    if (!known) session.repeat.push(id);
+    saved.cards[id] = known ? "known" : "repeat";
+    session.index++;
+    flipped = false;
     persist();
-    moveCard(known && unknownOnly ? 0 : 1);
+
+    const element = panel.querySelector(".flashcard");
+    if (!element || matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      renderCardState();
+      return;
+    }
+    leaving = element;
+    element.classList.remove("is-dragging");
+    element.classList.add("is-leaving");
+    positionCard(element, (known ? 1 : -1) * (element.clientWidth + 25));
+    setTimeout(() => {
+      if (leaving === element) renderCardState();
+    }, 170);
+  }
+
+  function endDrag(event, cancelled) {
+    if (drag?.id !== event.pointerId) return;
+    const { element, x, moved } = drag;
+    drag = null;
+    if (!moved) return;
+    const delta = event.clientX - x;
+    suppressCardClick = element;
+    const threshold = Math.min(110, Math.max(56, element.clientWidth * 0.21));
+    if (!cancelled && Math.abs(delta) >= threshold) {
+      markCard(delta > 0);
+      return;
+    }
+    element.classList.remove("is-dragging");
+    positionCard(element, 0);
   }
 
   function chooseSection(next) {
@@ -466,17 +565,17 @@
     "to-errors": () => navigate("errors"),
     "speak": element => speak(element.dataset.say),
     "flip": () => {
+      if (leaving) return;
       flipped = !flipped;
-      render();
-      panel.querySelector(".flashcard").focus({ preventScroll: true });
+      renderCardState();
     },
-    "it-first": () => { reverse = false; flipped = false; render(); },
-    "ru-first": () => { reverse = true; flipped = false; render(); },
-    "filter-cards": () => { unknownOnly = !unknownOnly; cardIndex = 0; flipped = false; render(); },
-    "show-all-cards": () => { unknownOnly = false; render(); },
-    "shuffle": () => { order = shuffled(lesson.cards); cardIndex = 0; flipped = false; render(); },
-    "prev-card": () => moveCard(-1),
-    "next-card": () => moveCard(1),
+    "it-first": () => { reverse = false; render(); panel.querySelector("[data-action='it-first']").focus(); },
+    "ru-first": () => { reverse = true; render(); panel.querySelector("[data-action='ru-first']").focus(); },
+    "shuffle": () => { mixCards = !mixCards; render(); panel.querySelector("[data-action='shuffle']").focus(); },
+    "new-cards": () => { showCardSetup = true; flipped = false; renderCardState(); },
+    "start-cards": startCards,
+    "resume-cards": () => { showCardSetup = false; renderCardState(); },
+    "next-card-round": nextCardRound,
     "mark-known": () => markCard(true),
     "mark-repeat": () => markCard(false),
     "pick-section": element => chooseSection(element.dataset.section),
@@ -528,6 +627,10 @@
   document.addEventListener("click", event => {
     const element = event.target.closest("button");
     if (!element || element.disabled) return;
+    if (suppressCardClick === element && event.detail !== 0) {
+      suppressCardClick = null;
+      return;
+    }
     const next = element.dataset.tab || element.dataset.jump;
     if (next) navigate(next);
     else actions[element.dataset.action]?.(element);
@@ -540,10 +643,40 @@
   panel.addEventListener("change", event => {
     if (event.target.id !== "card-tag") return;
     cardTag = event.target.value;
-    cardIndex = 0;
-    flipped = false;
     render();
     panel.querySelector("#card-tag").focus({ preventScroll: true });
+  });
+  panel.addEventListener("pointerdown", event => {
+    const element = event.target.closest(".flashcard");
+    if (!element || !event.isPrimary || event.button !== 0 || leaving) return;
+    suppressCardClick = null;
+    drag = { element, id: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
+  });
+  panel.addEventListener("pointermove", event => {
+    if (drag?.id !== event.pointerId) return;
+    const { element, x, y } = drag;
+    const delta = event.clientX - x;
+    if (!drag.moved) {
+      const vertical = Math.abs(event.clientY - y);
+      if (vertical > 12 && vertical > Math.abs(delta)) {
+        suppressCardClick = element;
+        drag = null;
+        return;
+      }
+      if (Math.abs(delta) < 9 || Math.abs(delta) < vertical * 1.25) return;
+      drag.moved = true;
+      element.setPointerCapture(event.pointerId);
+      element.classList.add("is-dragging");
+    }
+    positionCard(element, delta);
+  });
+  panel.addEventListener("pointerup", event => endDrag(event, false));
+  panel.addEventListener("pointercancel", event => endDrag(event, true));
+  panel.addEventListener("lostpointercapture", event => endDrag(event, true));
+  panel.addEventListener("keydown", event => {
+    if (!event.target.matches(".flashcard") || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    event.preventDefault();
+    if (!event.repeat) markCard(event.key === "ArrowRight");
   });
   panel.addEventListener("submit", event => {
     if (!event.target.matches(".answer-form")) return;
