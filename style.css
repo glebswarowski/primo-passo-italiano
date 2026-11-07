@@ -663,6 +663,9 @@ ul.error-list, ol.error-list { padding-inline-start: 24px; }
 }
 .example div > span { display: block; color: var(--muted); font-size: .88rem; }
 .example .audio-button { padding-inline: 11px; font-size: .78rem; }
+.audio-control { display: grid; justify-items: start; }
+.audio-feedback { max-width: 17ch; font-size: .78rem; color: var(--muted); }
+.audio-feedback:not(:empty) { margin-top: 4px; }
 .toolbar > button[aria-pressed="true"] { border-color: #a3b89d; background: #dfe9d6; }
 .deck-progress { font-size: .89rem; font-weight: 650; }
 .section-button > span:nth-child(2) { flex: 1 1 auto; }

@@ -86,6 +86,7 @@
   let drag = null;
   let leaving = null;
   let suppressCardClick = null;
+  let audioPlayback = null;
   let round = null;
   let retry = null;
 
@@ -104,8 +105,11 @@
     `<header class="section-heading"><p class="eyebrow">${kicker}</p><h2>${title}</h2><p>${description}</p></header>`;
   const button = (label, action, style = "secondary", extra = "") =>
     `<button type="button" class="${style}" data-action="${action}" ${extra}>${label}</button>`;
-  const speaker = value => button(`${icons.speaker} Слушать`, "speak", "secondary audio-button",
-    `data-say="${esc(value)}" aria-label="Прослушать итальянский пример"`);
+  const speaker = key => `<span class="audio-control">
+    ${button(`${icons.speaker} <span data-audio-label>Слушать</span>`, "speak", "secondary audio-button",
+      `data-audio="${esc(key)}"`)}
+    <span class="audio-feedback" role="status"></span>
+  </span>`;
   const progress = (value, total, label) =>
     `<progress class="meter" value="${value}" max="${total || 1}" aria-label="${esc(label)}"></progress>`;
   const errors = () => Object.keys(saved.errors).filter(id => questions.has(id));
@@ -138,6 +142,7 @@
   }
 
   function render() {
+    stopAudio();
     drag = null;
     leaving = null;
     document.querySelectorAll("[data-tab]").forEach(item => {
@@ -162,9 +167,9 @@
       <div class="note-list">${lesson.notes.map((note, i) => `<details class="note" ${i === 0 ? "open" : ""}>
         <summary><span class="note-index">${String(i + 1).padStart(2, "0")}</span>${esc(note.title)}</summary>
         <div class="note-body"><p>${esc(note.body)}</p>
-          ${note.examples.map(example => `<div class="example">
+          ${note.examples.map((example, j) => `<div class="example">
             <div><strong lang="it">${esc(example.it)}</strong><span>${esc(example.ru)}</span></div>
-            ${example.it.includes("→") ? "" : speaker(example.it)}
+            ${example.it.includes("→") ? "" : speaker(`note-${i + 1}-${j + 1}`)}
           </div>`).join("")}
         </div>
       </details>`).join("")}</div>
@@ -246,7 +251,7 @@
         <span>Знаю <b>${known}/${total}</b> · В следующем круге <b>${repeat.length}</b></span>
         ${button("Новая серия", "new-cards", "quiet-link")}
       </div>
-      ${italianSide ? `<div class="card-audio">${speaker(card.it)}</div>` : ""}
+      ${italianSide || flipped ? `<div class="card-audio">${speaker(`card-${card.id}`)}</div>` : ""}
     </div>`;
   }
 
@@ -452,26 +457,43 @@
     }
   }
 
-  function speak(text) {
-    if (!("speechSynthesis" in window)) {
-      status("Озвучка недоступна в этом браузере.");
-      return;
-    }
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "it-IT";
-    utterance.rate = 0.84;
-    const voices = speechSynthesis.getVoices();
-    const voice = voices.find(item => item.lang.toLowerCase().startsWith("it"));
-    if (voices.length && !voice) {
-      status("Для озвучки добавь итальянский голос в настройках устройства.");
-      return;
-    }
-    if (voice) utterance.voice = voice;
-    utterance.onerror = event => {
-      if (!["interrupted", "canceled"].includes(event.error)) status("Итальянский голос недоступен на этом устройстве.");
+  function stopAudio() {
+    if (!audioPlayback) return;
+    const { clip, label } = audioPlayback;
+    audioPlayback = null;
+    clip.onended = null;
+    clip.onerror = null;
+    clip.pause();
+    clip.removeAttribute("src");
+    clip.load();
+    label.textContent = "Слушать";
+  }
+
+  async function speak(control) {
+    const wasPlaying = audioPlayback?.control === control;
+    stopAudio();
+    if (wasPlaying) return;
+
+    const label = control.querySelector("[data-audio-label]");
+    const feedback = control.parentElement.querySelector(".audio-feedback");
+    feedback.textContent = "";
+    const clip = new Audio(`./audio/${current.id}/${control.dataset.audio}.mp3`);
+    const playback = { clip, control, label };
+    audioPlayback = playback;
+    label.textContent = "Остановить";
+    const finish = message => {
+      if (audioPlayback !== playback) return;
+      stopAudio();
+      feedback.textContent = message;
     };
-    speechSynthesis.cancel();
-    speechSynthesis.speak(utterance);
+    const fail = () => finish("Звук не загрузился. Попробуй ещё раз.");
+    clip.onended = () => finish("");
+    clip.onerror = fail;
+    try {
+      await clip.play();
+    } catch {
+      fail();
+    }
   }
 
   function renderCardState() {
@@ -563,7 +585,7 @@
     "to-drills": () => navigate("drills"),
     "to-exam": () => navigate("exam"),
     "to-errors": () => navigate("errors"),
-    "speak": element => speak(element.dataset.say),
+    "speak": speak,
     "flip": () => {
       if (leaving) return;
       flipped = !flipped;
@@ -683,6 +705,7 @@
     event.preventDefault();
     check();
   });
+  window.addEventListener("pagehide", stopAudio);
   render();
   if (tab !== "notes") panel.scrollIntoView({ block: "start" });
 })();
